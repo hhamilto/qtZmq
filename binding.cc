@@ -56,26 +56,37 @@ ExceptionFromError() {
 void *context;
 void *subscriber;
 v8::Persistent<v8::Object> exports;
+uv_poll_t *poll_handle_;
 
 NAN_METHOD(DoReceive);
+NAN_METHOD(Connect);
 
+void UV_PollCallback(uv_poll_t* handle, int status, int events);
 
 extern "C" void
 init(Handle<Object> theExports) {
   NanAssignPersistent(exports, theExports);
 
-  context = zmq_ctx_new();
+  theExports->Set(NanNew<String>("doReceive"),
+    NanNew<FunctionTemplate>(DoReceive)->GetFunction());
+  theExports->Set(NanNew<String>("connect"),
+    NanNew<FunctionTemplate>(Connect)->GetFunction());
 
-/*
-  int major, minor, patch;
-  void zmq_version(&major, &minor, &patch);
-  printf("%s")
-*/
+
+}
+
+
+NAN_METHOD(Connect) {
+  NanScope();
+
+  char* connectAddress = **(new NanUtf8String(args[0]));
+
+  context = zmq_ctx_new();
 
   //  Socket to talk to server
   printf ("Connecting to hello world server…\n");
   subscriber = zmq_socket(context, ZMQ_SUB);
-  int rc = zmq_connect(subscriber, "tcp://192.168.0.45:5602");
+  int rc = zmq_connect(subscriber, connectAddress);
   if(rc != 0)
     printf("uhhh ohh \n");
 
@@ -85,24 +96,30 @@ init(Handle<Object> theExports) {
   if(rc != 0)
     printf("uhhh ohh 2: %s\n", zmq_strerror(zmq_errno()));
 
-  theExports->Set(NanNew<String>("doReceive"),
-    NanNew<FunctionTemplate>(DoReceive)->GetFunction());
 
-/*
-  zmq_msg_t message;
-  zmq_msg_init (&message);
-  int size = zmq_msg_recv(&message, subscriber, 0);
-  if (size == -1)
-    printf("uhhh ohh 3: %s\n", zmq_strerror(zmq_errno()));
-  char *string = malloc (size + 1);
-  memcpy (string, zmq_msg_data (&message), size);
-  zmq_msg_close (&message);
 
-  zmq_close (subscriber);
-  zmq_ctx_destroy (context);
-*/
+  poll_handle_ = new uv_poll_t;
+
+  uv_os_sock_t socket;
+  size_t len = sizeof(uv_os_sock_t);
+
+  if (zmq_getsockopt(subscriber, ZMQ_FD, &socket, &len)) {
+    throw std::runtime_error(ErrorMessage());
+  }
+  //poll_handle_->data = this;
+  uv_poll_init_socket(uv_default_loop(), poll_handle_, socket);
+  uv_poll_start(poll_handle_, UV_READABLE, UV_PollCallback);
+
+  NanReturnUndefined(); 
 }
 
+
+
+void UV_PollCallback(uv_poll_t* handle, int status, int events){
+  v8::Local<v8::Object> exportsHandle =NanNew(exports);
+
+  NanMakeCallback(exportsHandle, exportsHandle->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
+}
 
 static void FreeCallback(char* data, void* message) {
   if (zmq_msg_close((zmq_msg_t*)message) < 0)
@@ -134,10 +151,17 @@ NAN_METHOD(DoReceive) {
 
     while (true) {
      // printf("qoooooooO3!\n");
-      int rc = zmq_msg_recv(message, subscriber, 0);
+      int rc = zmq_msg_recv(message, subscriber, ZMQ_DONTWAIT);
       if (rc < 0) {
         if (zmq_errno()==EINTR) {
           continue;
+        }else if (zmq_errno()==EAGAIN) {
+          //printf("wooo\n");
+          if (zmq_msg_close(message) < 0)
+            throw std::runtime_error(ErrorMessage());
+          free(message);
+          NanReturnUndefined(); 
+          return;
         }
         NanThrowError(ErrorMessage());
         return;
