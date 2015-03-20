@@ -51,64 +51,87 @@ ExceptionFromError() {
   return NanError(ErrorMessage());
 }
 
+Persistent<FunctionTemplate> socketConstructor;
 
-// module
-void *context;
-void *subscriber;
-v8::Persistent<v8::Object> exports;
-uv_poll_t *poll_handle_;
-
-NAN_METHOD(DoReceive);
-NAN_METHOD(Connect);
+class Socket : public node::ObjectWrap {
+  void *context;
+  void *subscriber;
+  uv_poll_t *poll_handle_;
+  static NAN_METHOD(DoReceive);
+  static NAN_METHOD(Connect);
+  static NAN_METHOD(New);
+  public:
+    static void Init(){
+    Local<FunctionTemplate> tpl = NanNew<FunctionTemplate>(Socket::New);
+    NanAssignPersistent(socketConstructor, tpl);
+    tpl->SetClassName(NanNew<String>("Socket"));
+    tpl->InstanceTemplate()->SetInternalFieldCount(1);
+    //NODE_SET_PROTOTYPE_METHOD(tpl, "New", Socket::New);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "connect", Socket::Connect);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "doReceive", Socket::DoReceive);
+  }
+};
 
 void UV_PollCallback(uv_poll_t* handle, int status, int events);
 
+
 extern "C" void
 init(Handle<Object> theExports) {
-  NanAssignPersistent(exports, theExports);
 
-  theExports->Set(NanNew<String>("doReceive"),
-    NanNew<FunctionTemplate>(DoReceive)->GetFunction());
-  theExports->Set(NanNew<String>("connect"),
-    NanNew<FunctionTemplate>(Connect)->GetFunction());
+  Socket::Init();
+  v8::Local<v8::FunctionTemplate> constructorHandle =
+      NanNew(socketConstructor);
 
+  theExports->Set(NanNew<String>("Socket"), constructorHandle->GetFunction());
+}
+
+NAN_METHOD(Socket::New) {
+  NanScope();
+  Socket* socket = new Socket();
+  socket->Wrap(args.This());
+
+  //args.This()->Set(NanSymbol("buffers"), NanNew<Array>());
+
+  //NanAssignPersistent(finder->m_onNewLine, args[0].As<Function>());
+
+  NanReturnValue(args.This());
 
 }
 
-
-NAN_METHOD(Connect) {
+NAN_METHOD(Socket::Connect) {
   NanScope();
+  Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
+  socket->Ref();
 
   char* connectAddress = **(new NanUtf8String(args[0]));
-
-  context = zmq_ctx_new();
+  socket->context = zmq_ctx_new();
 
   //  Socket to talk to server
-  printf ("Connecting to hello world server…\n");
-  subscriber = zmq_socket(context, ZMQ_SUB);
-  int rc = zmq_connect(subscriber, connectAddress);
-  if(rc != 0)
-    printf("uhhh ohh \n");
-
+  socket->subscriber = zmq_socket(socket->context, ZMQ_SUB);
+  int rc = zmq_connect(socket->subscriber, connectAddress);
+  if(rc != 0){
+    NanThrowError(ExceptionFromError());
+    return;
+  }
 
   char filter = 0;
-  rc = zmq_setsockopt (subscriber, ZMQ_SUBSCRIBE, &filter, 0);
-  if(rc != 0)
-    printf("uhhh ohh 2: %s\n", zmq_strerror(zmq_errno()));
+  rc = zmq_setsockopt(socket->subscriber, ZMQ_SUBSCRIBE, &filter, 0);
+  if(rc != 0){
+    NanThrowError(ExceptionFromError());
+    return;
+  }
 
-
-
-  poll_handle_ = new uv_poll_t;
-
-  uv_os_sock_t socket;
+  socket->poll_handle_ = new uv_poll_t;
+  socket->poll_handle_->data = socket;
+  
+  uv_os_sock_t os_socket;
   size_t len = sizeof(uv_os_sock_t);
 
-  if (zmq_getsockopt(subscriber, ZMQ_FD, &socket, &len)) {
+  if (zmq_getsockopt(socket->subscriber, ZMQ_FD, &os_socket, &len)) {
     throw std::runtime_error(ErrorMessage());
   }
-  //poll_handle_->data = this;
-  uv_poll_init_socket(uv_default_loop(), poll_handle_, socket);
-  uv_poll_start(poll_handle_, UV_READABLE, UV_PollCallback);
+  uv_poll_init_socket(uv_default_loop(), socket->poll_handle_, os_socket);
+  uv_poll_start(socket->poll_handle_, UV_READABLE, UV_PollCallback);
 
   NanReturnUndefined(); 
 }
@@ -116,9 +139,8 @@ NAN_METHOD(Connect) {
 
 
 void UV_PollCallback(uv_poll_t* handle, int status, int events){
-  v8::Local<v8::Object> exportsHandle =NanNew(exports);
-
-  NanMakeCallback(exportsHandle, exportsHandle->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
+  Socket* s = static_cast<Socket*>(handle->data);
+  NanMakeCallback(NanObjectWrapHandle(s), NanObjectWrapHandle(s)->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
 }
 
 static void FreeCallback(char* data, void* message) {
@@ -127,16 +149,16 @@ static void FreeCallback(char* data, void* message) {
   free(message);
 }
 
-NAN_METHOD(DoReceive) {
+NAN_METHOD(Socket::DoReceive) {
   NanScope();
+  Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
 
   //printf("qoooooooO!\n");
-  v8::Local<v8::Object> exportsHandle =NanNew(exports);
-  //Local<Object> localExports = 
-  Local<Value> callback_v = exportsHandle->Get(NanNew("onMessage"));
+
+  Local<Value> callback_v = NanObjectWrapHandle(socket)->Get(NanNew("onMessage"));
 
   if (!callback_v->IsFunction()) {
-    printf("wtdc\n");
+    NanThrowError(NanError("onMessage callback was not a function. Perhaps its undefined?"));
     return;
   }
 
@@ -150,8 +172,9 @@ NAN_METHOD(DoReceive) {
     zmq_msg_init(message);
 
     while (true) {
-     // printf("qoooooooO3!\n");
-      int rc = zmq_msg_recv(message, subscriber, ZMQ_DONTWAIT);
+      //printf("qoooooooO3!\n");
+      int rc = zmq_msg_recv(message, socket->subscriber, ZMQ_DONTWAIT);
+      //printf("qoooooooO6!\n");
       if (rc < 0) {
         if (zmq_errno()==EINTR) {
           continue;
@@ -179,19 +202,19 @@ NAN_METHOD(DoReceive) {
 
     int more_to_receive = 0;
     size_t len = sizeof(more_to_receive);
-    if (zmq_getsockopt(subscriber, ZMQ_RCVMORE, &more_to_receive, &len) < 0) {
+    if (zmq_getsockopt(socket->subscriber, ZMQ_RCVMORE, &more_to_receive, &len) < 0) {
       NanThrowError(ExceptionFromError());
       return;
     }
 
- //   printf("qoooooooO5!%d\n", more_to_receive);
+    //printf("qoooooooO5!%d\n", more_to_receive);
     if(!more_to_receive){
       break;
     }
   }
 
   Local<Value> argv[] = {message_buffers};
-  NanMakeCallback(exportsHandle, callback_v.As<Function>(), 1, argv);
+  NanMakeCallback(NanObjectWrapHandle(socket), callback_v.As<Function>(), 1, argv);
 
   NanReturnUndefined(); 
 }
