@@ -162,7 +162,7 @@ NAN_METHOD(Socket::DoReceive) {
     return;
   }
 
-  Local<Array> message_buffers = NanNew<Array>(1);
+  Local<Array> message_buffers = NanNew<Array>(2);
   int message_part_count = 0;
   while(true){
 
