@@ -57,8 +57,10 @@ class Socket : public node::ObjectWrap {
   void *context;
   void *subscriber;
   uv_poll_t *poll_handle_;
+  Persistent<Function> onMessage_cb;
   static NAN_METHOD(DoReceive);
   static NAN_METHOD(Connect);
+  static NAN_METHOD(SetOnMessage);
   static NAN_METHOD(New);
   public:
     static void Init(){
@@ -69,6 +71,7 @@ class Socket : public node::ObjectWrap {
     //NODE_SET_PROTOTYPE_METHOD(tpl, "New", Socket::New);
     NODE_SET_PROTOTYPE_METHOD(tpl, "connect", Socket::Connect);
     NODE_SET_PROTOTYPE_METHOD(tpl, "doReceive", Socket::DoReceive);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "onMessage", Socket::SetOnMessage);
   }
 };
 
@@ -89,13 +92,23 @@ NAN_METHOD(Socket::New) {
   NanScope();
   Socket* socket = new Socket();
   socket->Wrap(args.This());
-
-  //args.This()->Set(NanSymbol("buffers"), NanNew<Array>());
-
-  //NanAssignPersistent(finder->m_onNewLine, args[0].As<Function>());
-
   NanReturnValue(args.This());
 
+}
+
+NAN_METHOD(Socket::SetOnMessage) {
+  NanScope();
+  Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
+
+  Local<Value> callback_v = args[0]; //NanObjectWrapHandle(socket)->Get(NanNew("onMessage"));
+
+  if (!callback_v->IsFunction()) {
+    NanThrowError(NanError("onMessage callback was not a function. Perhaps its undefined?"));
+    return;
+  }
+
+  NanAssignPersistent(socket->onMessage_cb, callback_v.As<Function>());
+  NanReturnUndefined(); 
 }
 
 NAN_METHOD(Socket::Connect) {
@@ -152,15 +165,7 @@ static void FreeCallback(char* data, void* message) {
 NAN_METHOD(Socket::DoReceive) {
   NanScope();
   Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
-
-  //printf("qoooooooO!\n");
-
-  Local<Value> callback_v = NanObjectWrapHandle(socket)->Get(NanNew("onMessage"));
-
-  if (!callback_v->IsFunction()) {
-    NanThrowError(NanError("onMessage callback was not a function. Perhaps its undefined?"));
-    return;
-  }
+  
 
   Local<Array> message_buffers = NanNew<Array>(2);
   int message_part_count = 0;
@@ -214,7 +219,8 @@ NAN_METHOD(Socket::DoReceive) {
   }
 
   Local<Value> argv[] = {message_buffers};
-  NanMakeCallback(NanObjectWrapHandle(socket), callback_v.As<Function>(), 1, argv);
+  Local<Function> local_cb = NanNew<Function>(socket->onMessage_cb);
+  NanMakeCallback(NanObjectWrapHandle(socket), local_cb, 1, argv);
 
   NanReturnUndefined(); 
 }
