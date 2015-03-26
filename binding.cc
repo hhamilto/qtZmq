@@ -64,7 +64,8 @@ class Socket : public node::ObjectWrap {
   static NAN_METHOD(Close);
   static NAN_METHOD(New);
   public:
-    static void Init(){
+  char open;
+  static void Init(){
     Local<FunctionTemplate> tpl = NanNew<FunctionTemplate>(Socket::New);
     NanAssignPersistent(socketConstructor, tpl);
     tpl->SetClassName(NanNew<String>("Socket"));
@@ -94,6 +95,7 @@ NAN_METHOD(Socket::New) {
   NanScope();
   Socket* socket = new Socket();
   socket->Wrap(args.This());
+  socket->open = 0;
   NanReturnValue(args.This());
 
 }
@@ -144,6 +146,8 @@ NAN_METHOD(Socket::Close) {
   }
 
   socket->Unref();
+
+  socket->open = 0;
   NanReturnUndefined();
 }
 
@@ -193,6 +197,7 @@ NAN_METHOD(Socket::Connect) {
   if (zmq_getsockopt(socket->subscriber, ZMQ_FD, &os_socket, &len)) {
     throw std::runtime_error(ErrorMessage());
   }
+  socket->open = 1;
   uv_poll_init_socket(uv_default_loop(), socket->poll_handle_, os_socket);
   uv_poll_start(socket->poll_handle_, UV_READABLE, UV_PollCallback);
 
@@ -203,7 +208,9 @@ NAN_METHOD(Socket::Connect) {
 
 void UV_PollCallback(uv_poll_t* handle, int status, int events){
   Socket* s = static_cast<Socket*>(handle->data);
-  NanMakeCallback(NanObjectWrapHandle(s), NanObjectWrapHandle(s)->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
+  if(s->open == 1){
+    NanMakeCallback(NanObjectWrapHandle(s), NanObjectWrapHandle(s)->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
+  }
 }
 
 static void FreeCallback(char* data, void* message) {
