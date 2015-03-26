@@ -61,6 +61,7 @@ class Socket : public node::ObjectWrap {
   static NAN_METHOD(DoReceive);
   static NAN_METHOD(Connect);
   static NAN_METHOD(SetOnMessage);
+  static NAN_METHOD(Close);
   static NAN_METHOD(New);
   public:
     static void Init(){
@@ -72,6 +73,7 @@ class Socket : public node::ObjectWrap {
     NODE_SET_PROTOTYPE_METHOD(tpl, "connect", Socket::Connect);
     NODE_SET_PROTOTYPE_METHOD(tpl, "doReceive", Socket::DoReceive);
     NODE_SET_PROTOTYPE_METHOD(tpl, "onMessage", Socket::SetOnMessage);
+    NODE_SET_PROTOTYPE_METHOD(tpl, "close", Socket::Close);
   }
 };
 
@@ -109,6 +111,27 @@ NAN_METHOD(Socket::SetOnMessage) {
 
   NanAssignPersistent(socket->onMessage_cb, callback_v.As<Function>());
   NanReturnUndefined(); 
+}
+
+NAN_METHOD(Socket::Close) {
+  int rc;
+  NanScope();
+
+  Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
+  rc =  zmq_close(socket->subscriber);
+  if(rc != 0){
+    NanThrowError(ExceptionFromError());
+    return;
+  }
+
+  rc =  zmq_ctx_term(socket->context);
+  if(rc != 0){
+    NanThrowError(ExceptionFromError());
+    return;
+  }
+
+  socket->Unref();
+  NanReturnUndefined();
 }
 
 NAN_METHOD(Socket::Connect) {
@@ -175,11 +198,8 @@ NAN_METHOD(Socket::DoReceive) {
 
     zmq_msg_t* message = (zmq_msg_t*) malloc(sizeof( zmq_msg_t));
     zmq_msg_init(message);
-
     while (true) {
-      //printf("qoooooooO3!\n");
       int rc = zmq_msg_recv(message, socket->subscriber, ZMQ_DONTWAIT);
-      //printf("qoooooooO6!\n");
       if (rc < 0) {
         if (zmq_errno()==EINTR) {
           continue;
