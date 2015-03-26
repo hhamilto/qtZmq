@@ -114,20 +114,33 @@ NAN_METHOD(Socket::SetOnMessage) {
 }
 
 NAN_METHOD(Socket::Close) {
-  int rc;
   NanScope();
 
   Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
-  rc =  zmq_close(socket->subscriber);
-  if(rc != 0){
-    NanThrowError(ExceptionFromError());
-    return;
+  while (true) {
+    int rc =  zmq_close(socket->subscriber);
+    if (rc != 0) {
+      if (zmq_errno()==EINTR) {
+        continue;
+      }
+      NanThrowError(ErrorMessage());
+      return;
+    } else {
+      break;
+    }
   }
 
-  rc =  zmq_ctx_term(socket->context);
-  if(rc != 0){
-    NanThrowError(ExceptionFromError());
-    return;
+  while (true) {
+    int rc =  zmq_ctx_term(socket->context);
+    if (rc != 0) {
+      if (zmq_errno()==EINTR) {
+        continue;
+      }
+      NanThrowError(ErrorMessage());
+      return;
+    } else {
+      break;
+    }
   }
 
   socket->Unref();
@@ -144,17 +157,31 @@ NAN_METHOD(Socket::Connect) {
 
   //  Socket to talk to server
   socket->subscriber = zmq_socket(socket->context, ZMQ_SUB);
-  int rc = zmq_connect(socket->subscriber, connectAddress);
-  if(rc != 0){
-    NanThrowError(ExceptionFromError());
-    return;
+  while (true) {
+    int rc = zmq_connect(socket->subscriber, connectAddress);
+    if (rc != 0) {
+      if (zmq_errno()==EINTR) {
+        continue;
+      }
+      NanThrowError(ErrorMessage());
+      return;
+    } else {
+      break;
+    }
   }
 
   char filter = 0;
-  rc = zmq_setsockopt(socket->subscriber, ZMQ_SUBSCRIBE, &filter, 0);
-  if(rc != 0){
-    NanThrowError(ExceptionFromError());
-    return;
+  while (true) {
+    int rc = zmq_setsockopt(socket->subscriber, ZMQ_SUBSCRIBE, &filter, 0);
+    if (rc != 0) {
+      if (zmq_errno()==EINTR) {
+        continue;
+      }
+      NanThrowError(ErrorMessage());
+      return;
+    } else {
+      break;
+    }
   }
 
   socket->poll_handle_ = new uv_poll_t;
