@@ -117,8 +117,13 @@ NAN_METHOD(Socket::SetOnMessage) {
 
 NAN_METHOD(Socket::Close) {
   NanScope();
-
   Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
+
+  int rc = uv_poll_stop(socket->poll_handle_);
+  if(rc != 0){
+      NanThrowError("uv_poll_stop failed with return code: "+ rc);
+  }
+
   while (true) {
     int rc =  zmq_close(socket->subscriber);
     if (rc != 0) {
