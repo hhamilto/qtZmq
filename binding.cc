@@ -213,9 +213,7 @@ NAN_METHOD(Socket::Connect) {
 
 void UV_PollCallback(uv_poll_t* handle, int status, int events){
   Socket* s = static_cast<Socket*>(handle->data);
-  if(s->open == 1){
-    NanMakeCallback(NanObjectWrapHandle(s), NanObjectWrapHandle(s)->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
-  }
+  NanMakeCallback(NanObjectWrapHandle(s), NanObjectWrapHandle(s)->Get(NanNew("doReceive")).As<Function>(), 0, NULL);
 }
 
 static void FreeCallback(char* data, void* message) {
@@ -225,9 +223,15 @@ static void FreeCallback(char* data, void* message) {
 }
 
 NAN_METHOD(Socket::DoReceive) {
+
   NanScope();
   Socket* socket = ObjectWrap::Unwrap<Socket>(args.This());
   
+  if(socket->open == 0){
+    NanReturnUndefined(); 
+    return;
+  }
+
 
   Local<Array> message_buffers = NanNew<Array>(2);
   int message_part_count = 0;
